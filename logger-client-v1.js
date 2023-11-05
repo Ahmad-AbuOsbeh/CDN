@@ -3,7 +3,7 @@
     let _loggerConfig = {
         tags: [], //['tag1', 'tag2']
         token: '',
-        levels: [], //['info', 'event', 'warn', 'error']
+        levels: [], //['info', 'log', 'warn', 'error']
         stringTags: "", //'tag1,tag2'
         context: {
             appId: "", 
@@ -15,19 +15,21 @@
             instanceId: ""
         }
     };
+    const predefinedLevels = ['info', 'log', 'warn', 'error'];
     const CATEGORIES = {
-        error: {
-            console: "ConsoleError",
-            exception: "BrowserJsException",
-        },
         info: {
+           console: "ConsoleInfo" 
+        },
+        log: {
            console: "ConsoleLog" 
         },
         warn: {
            console: "ConsoleWarn" 
         },
-        event: {
-        },
+        error: {
+            console: "ConsoleError",
+            exception: "BrowserJsException",
+        }
     }
     const _convertTagsArrayToString = (tags) => {
         if (!tags) {
@@ -41,7 +43,6 @@
         if (!levels) {
             levels = [];
         }
-        const predefinedLevels = ['info', 'event', 'warn', 'error'];
         levels.forEach(l => {
             if (!predefinedLevels.includes(l)) {
                 console.error(`Failed to initialize logger: Invalid log level - "${l}". Allowed levels are: ${predefinedLevels}.`);
@@ -57,7 +58,8 @@
         }
         return token.trim();
     };
-    const _attachError = (level) => {
+    const _attachError = () => {
+        const level = "error";
         const originalConsoleError = console.error;
 
         // Override console.error to log errors
@@ -66,7 +68,7 @@
                 level,
                 category: CATEGORIES[level].console
             };
-            window.bfLoggerTracker.log(options, ...args);
+            _log(options, ...args);
             originalConsoleError(...args);
         };
         window.addEventListener("error", (event) => {
@@ -81,8 +83,20 @@
                     url: event.filename
                 }
             };
-            window.bfLoggerTracker.log(options, event.message);
+            _log(options, event.message);
         });
+    };
+    const _attachConsoleLevel = (level) => {
+        const originalConsoleLevel = console[level];
+
+        console[level] = (...args) => {
+            const options = {
+                level,
+                category: CATEGORIES[level].console
+            };
+            _log(options, ...args);
+            originalConsoleLevel(...args);
+        };
     };
     const _attachLevels = () => {
         window._LTracker = window._LTracker || [];
@@ -93,19 +107,42 @@
         });
         _loggerConfig.levels.forEach(l => {
             switch (l) {
-                case "error":
-                    _attachError('error');
-                    break;
                 case "info":
+                    _attachConsoleLevel("info");
                     break;
-                case "event":
+                case "log":
+                    _attachConsoleLevel("log");
                     break;
                 case "warn":
+                    _attachConsoleLevel("warn");
+                    break;
+                case "error":
+                    _attachError();
                     break;
             }
         });
 
         _loggerInitialized = true;
+    };
+    const _log = (options, ...args) => {
+        if (!_loggerInitialized) {
+            console.warn("Logger not initialized: Unable to log messages.");
+            return;
+        }
+        const { level, category, exception } = options;
+        const _data = {
+            message: args.length > 1 ? {...args} : args[0],
+            context: _loggerConfig.context,
+            level,
+            category
+        };
+
+        if (exception) {
+            _data.exception = exception;
+        }
+        if (window._LTracker) {
+            window._LTracker.push(_data);
+        }
     };
     window.bfLoggerTracker = {
         init: function(config) {
@@ -144,30 +181,31 @@
         
             document.head.appendChild(script);
         },
-        log: function (options, ...args) {
+        log: function (...args) {
             if (!_loggerInitialized) {
                 console.warn("Logger not initialized: Unable to log messages.");
                 return;
             }
-            const { level, category, exception } = options;
-            const _data = {
-                message: args,
-                context: _loggerConfig.context,
-                level,
-                category,
-                tags: _loggerConfig.stringTags
-            };
+            if (!args || !args.length) {
+                return;
+            }
+            let level = "info";
+            if (args.length > 1) {
+                const firstArg = args[0];
+                if (typeof firstArg == 'string' && predefinedLevels.includes(firstArg)) {
+                    level = firstArg;
+                    args.splice(0, 1);
+                }
+            }
 
-            if (exception) {
-                _data.exception = exception;
-            }
-            if (window._LTracker) {
-                window._LTracker.push(_data);
-            }
+            _log({level}, ...args);
         },
-        setLoggerContext: function (context) {
-            _loggerConfig.context = context;
-            console.log("Logger context updated successfully.", context); 
+        setContext: function (context) {
+            try {
+                _loggerConfig.context = JSON.parse(JSON.stringify(context)); 
+            } catch (err) {
+                console.error("Failed to set logger context: Invalid context object.", err);
+            }
         }
     };
 })(window, document);
